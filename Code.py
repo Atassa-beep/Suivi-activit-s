@@ -7,23 +7,28 @@ Created on Mon Jun 15 12:33:23 2026
 import streamlit as st
 import pandas as pd
 from datetime import date
+# Import de la connexion Google Sheets de Streamlit
+from streamlit_searchbox import st_searchbox # facultatif, non requis ici
+from streamlit_gsheets import GSheetsConnection
 
 # 1. Configuration de la page
 st.set_page_config(page_title="Suivi-Évaluation d'Activités", layout="wide")
 
 st.title("📊 Outil de Suivi et de Pilotage des Activités (Collaboratif)")
-st.write("Connexion Cloud directe via flux CSV - Version Haute Compatibilité.")
+st.write("Connexion Cloud directe via Google Sheets API.")
 
-# 2. CONFIGURATION DE VOTRE LIEN GOOGLE SHEETS PUBLIÉ EN CSV
-# Ton vrai lien est intégré ici directement
-URL_CSV_GOOGLE_SHEETS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTsQyWKfiCsTqYAp0_LgcvhFvofH7RU_hyipDSCR4j0kMOB1MWFzemo-A7PKUNgsTgOZYx1WbYoFGiB/pub?output=csv"
+# 2. CONFIGURATION DE LA CONNEXION DIRECTE EN ÉCRITURE
+# On crée la connexion. Elle utilisera l'URL que tu as définie.
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Chargement sécurisé des données
+URL_SHEETS_NORMAL = "https://docs.google.com/spreadsheets/d/1TsQyWKfiCsTqYAp0_LgcvhFvofH7RU_hyipDSCR4j0kMOB1MWFzemo-A7PKUNgsTgOZYx1WbYoFGiB/edit?usp=sharing"
+
+# Chargement sécurisé des données depuis le Cloud
 @st.cache_data(ttl=5)  # Rafraîchit les données toutes les 5 secondes
-def charger_donnees(url):
+def charger_donnees():
     try:
-        df = pd.read_csv(url)
-        # S'assurer que les colonnes obligatoires existent si la feuille est neuve
+        # Utilisation de la connexion pour LIRE
+        df = conn.read(spreadsheet=URL_SHEETS_NORMAL, ttl="5s")
         champs_obligatoires = ["Code Activité", "Projet", "Composante", "Activité", "Responsable", 
                                "Date Prévue", "Date Réalisée", "Statut Actuel", "Avancement (%)", 
                                "Budget Prévu (FCFA)", "Lieu", "Bénéficiaires", "Date de Fin", "Observations", "Date Saisie"]
@@ -31,16 +36,15 @@ def charger_donnees(url):
             return pd.DataFrame(columns=champs_obligatoires)
         return df
     except Exception as e:
+        st.error(f"Erreur de lecture Cloud : {e}")
         return pd.DataFrame()
 
-donnees = charger_donnees(URL_CSV_GOOGLE_SHEETS)
+# Charger les données depuis Google Sheets au démarrage
+donnees_cloud = charger_donnees()
 
-# Initialisation de la mémoire temporaire pour la session Streamlit
-if "double_stockage" not in st.session_state:
-    st.session_state["double_stockage"] = donnees
-else:
-    if not donnees.empty and len(donnees) > len(st.session_state["double_stockage"]):
-        st.session_state["double_stockage"] = donnees
+# Synchronisation de la session locale avec le Cloud
+if "double_stockage" not in st.session_state or st.sidebar.button("🔄 Forcer la synchronisation Cloud"):
+    st.session_state["double_stockage"] = donnees_cloud.copy()
 
 donnees_locales = st.session_state["double_stockage"]
 
@@ -137,7 +141,6 @@ with col1:
                     donnees_locales.at[idx, "Observations"] = observations
                     
                     st.session_state["id_en_cours_modification"] = None
-                    st.success("Activité mise à jour localement !")
                 else:
                     prefixe = "".join([mot[0].upper() for mot in composante.split()][:2])
                     num = len(donnees_locales) + 1
@@ -151,19 +154,23 @@ with col1:
                         "Bénéficiaires": beneficiaires, "Date de Fin": d_fin, "Observations": observations,
                         "Date Saisie": date.today().strftime("%Y-%m-%d")
                     }
-                    
-                    st.session_state["double_stockage"] = pd.concat([donnees_locales, pd.DataFrame([nouvelle_ligne])], ignore_index=True)
-                    st.success(f"Activité ajoutée localement ! Code : {code_auto}")
-                st.rerun()
+                    donnees_locales = pd.concat([donnees_locales, pd.DataFrame([nouvelle_ligne])], ignore_index=True)
+                
+                # --- ÉTAPE CRUCIALE : ÉCRITURE DANS LE CLOUD ---
+                try:
+                    conn.update(spreadsheet=URL_SHEETS_NORMAL, data=donnees_locales)
+                    st.session_state["double_stockage"] = donnees_locales
+                    st.success("💾 Données enregistrées et synchronisées avec succès sur Google Sheets Cloud !")
+                    st.cache_data.clear() # Force le rechargement propre
+                    st.rerun()
+                except Exception as cloud_err:
+                    st.error(f"Erreur lors de la sauvegarde sur le Cloud Google Sheets : {cloud_err}")
             else:
                 st.error("Veuillez remplir les champs obligatoires (*)")
 
     if st.session_state["id_en_cours_modification"] is not None:
         if st.button("❌ Annuler la modification", use_container_width=True):
             st.session_state["id_en_cours_modification"] = None
-            st.rerun()
-    else:
-        if st.button("🔄 Vider / Relancer le formulaire", use_container_width=True):
             st.rerun()
 
 # --- COLONNE DROITE : AFFICHAGE & GRAPHIQUES ---
@@ -194,11 +201,17 @@ with col2:
                     st.rerun()
             with c_b2:
                 if st.button("🗑️ Supprimer définitivement", use_container_width=True):
-                    st.session_state["double_stockage"] = donnees_locales[donnees_locales["Code Activité"] != code_choisi]
-                    if st.session_state["id_en_cours_modification"] == code_choisi:
-                        st.session_state["id_en_cours_modification"] = None
-                    st.success("Activité retirée.")
-                    st.rerun()
+                    donnees_restantes = donnees_locales[donnees_locales["Code Activité"] != code_choisi]
+                    try:
+                        conn.update(spreadsheet=URL_SHEETS_NORMAL, data=donnees_restantes)
+                        st.session_state["double_stockage"] = donnees_restantes
+                        if st.session_state["id_en_cours_modification"] == code_choisi:
+                            st.session_state["id_en_cours_modification"] = None
+                        st.success("Activité retirée du Cloud avec succès.")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur lors de la suppression sur le Cloud : {e}")
         
         # --- SECTION VISUALISATION ---
         st.markdown("---")
