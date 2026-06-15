@@ -8,7 +8,6 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 # Import de la connexion Google Sheets de Streamlit
-from streamlit_searchbox import st_searchbox # facultatif, non requis ici
 from streamlit_gsheets import GSheetsConnection
 
 # 1. Configuration de la page
