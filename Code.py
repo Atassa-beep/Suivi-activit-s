@@ -20,7 +20,7 @@ st.write("Connexion Cloud directe via Google Sheets API.")
 # On crée la connexion. Elle utilisera l'URL que tu as définie.
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-URL_SHEETS_NORMAL = "https://docs.google.com/spreadsheets/d/1TsQyWKfiCsTqYAp0_LgcvhFvofH7RU_hyipDSCR4j0kMOB1MWFzemo-A7PKUNgsTgOZYx1WbYoFGiB/edit?usp=sharing"
+URL_SHEETS_NORMAL = "https://docs.google.com/spreadsheets/d/1pj08XZSmtWOHgJ-lSt_lXGzmsqtJQBbzdWiWRegI7lE/edit?usp=sharing"
 
 # Chargement sécurisé des données depuis le Cloud
 @st.cache_data(ttl=5)  # Rafraîchit les données toutes les 5 secondes
